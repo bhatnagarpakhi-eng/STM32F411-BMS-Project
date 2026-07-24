@@ -44,7 +44,6 @@
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
-
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
@@ -62,7 +61,197 @@ static void MX_ADC1_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#define DS18B20_PORT DS18B20_GPIO_Port
+#define DS18B20_PIN  DS18B20_Pin
 
+static void DWT_Delay_Init(void)
+{
+	CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+	DWT->CYCCNT = 0;
+	DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+}
+
+static void DelayUs(volatile uint32_t us)
+{
+	uint32_t start = DWT->CYCCNT;
+	uint32_t cycles = us * (HAL_RCC_GetHCLKFreq() / 1000000);
+	while ((DWT->CYCCNT - start) < cycles);
+}
+
+static uint8_t OneWire_Reset(void)
+{
+	uint8_t presence = 0;
+
+	//OneWire_SetOutput();
+
+	DS18B20_PORT->BSRR = (uint32_t)DS18B20_PIN << 16U;
+
+	//HAL_GPIO_WritePin(DS18B20_PORT, DS18B20_PIN, GPIO_PIN_RESET);
+	DelayUs(480);
+
+	//OneWire_SetInput();
+	//HAL_GPIO_WritePin(DS18B20_PORT, DS18B20_PIN, GPIO_PIN_SET);
+	DS18B20_PORT->BSRR = DS18B20_PIN;
+	DelayUs(80);
+
+	if ((DS18B20_PORT->IDR & DS18B20_PIN)== 0)
+	{
+		presence = 1;
+
+	}
+	DelayUs(400);
+	return presence;
+
+	//presence = (HAL_GPIO_ReadPin(DS18B20_PORT, DS18B20_PIN) == GPIO_PIN_RESET) ? 1 : 0;
+	//DelayUs(410);
+	//return presence;
+}
+
+static void OneWire_WriteBit(uint8_t bit)
+{
+	//OneWire_SetOutput();
+	//HAL_GPIO_WritePin(DS18B20_PORT, DS18B20_PIN, GPIO_PIN_RESET);
+	DS18B20_PORT->BSRR = (uint32_t)DS18B20_PIN << 16U;
+
+	if (bit)
+	{
+		DelayUs(6);
+		//OneWire_SetInput();
+		DS18B20_PORT->BSRR = DS18B20_PIN;
+		DelayUs(64);
+
+	}
+	else
+	{
+		DelayUs(60);
+		//OneWire_SetInput();
+		DS18B20_PORT->BSRR = DS18B20_PIN;
+		DelayUs(10);
+	}
+}
+
+static uint8_t OneWire_ReadBit(void)
+{
+	uint8_t bit = 0;
+
+	//OneWire_SetOutput();
+
+	//HAL_GPIO_WritePin(DS18B20_PORT, DS18B20_PIN, GPIO_PIN_RESET);
+	DS18B20_PORT->BSRR = (uint32_t)DS18B20_PIN << 16U;
+	DelayUs(2);
+
+	//OneWire_SetInput();
+
+	//HAL_GPIO_WritePin(DS18B20_PORT, DS18B20_PIN, GPIO_PIN_SET);
+	DS18B20_PORT->BSRR = DS18B20_PIN;
+	DelayUs(13);
+
+	if((DS18B20_PORT->IDR & DS18B20_PIN) != 0)
+	{
+		bit = 1;
+
+	}
+
+	DelayUs(45);
+	return bit;
+
+}
+
+static void OneWire_WriteByte(uint8_t byte)
+{
+	for (uint8_t i=0; i<8; i++)
+	{
+		OneWire_WriteBit(byte & 0x01);
+		byte >>=1;
+	}
+}
+
+static uint8_t OneWire_ReadByte(void)
+{
+	uint8_t byte = 0;
+	for(uint8_t i=0; i<8; i++)
+	{
+		byte >>= 1;
+		if(OneWire_ReadBit())
+			byte |= 0x80;
+
+	}
+	return byte;
+}
+
+static uint8_t DS18B20_StartConversion(void)
+{
+	/*if((DS18B20_PORT->IDR & DS18B20_PIN)== 0)
+	{
+	return 0;
+	}*/
+
+	if (!OneWire_Reset())
+		return 0;
+
+	OneWire_WriteByte(0xCC);
+	OneWire_WriteByte(0x44);
+	return 1;
+
+}
+static float DS18B20_ReadTemperature(uint8_t *raw_byte0)
+{
+	uint8_t temp_lsb =0;
+	uint8_t temp_msb =0;
+
+	if (!OneWire_Reset())
+		return -999.0f;
+
+	OneWire_WriteByte(0xCC);
+	OneWire_WriteByte(0xBE);
+	//DelayUs(10);
+
+	/*if(!OneWire_Reset())
+		return -999.0f;
+
+	OneWire_WriteByte(0xCC);
+	OneWire_WriteByte(0x44);
+	OneWire_WriteByte(0xCC);
+	OneWire_WriteByte(0xBE);*/
+
+	temp_lsb = OneWire_ReadByte();
+	temp_msb = OneWire_ReadByte();
+
+	if(raw_byte0 != NULL){
+		*raw_byte0 = temp_lsb;
+	}
+
+	int16_t raw_temp = (temp_msb << 8) | temp_lsb;
+	float temperature = raw_temp / 16.0f;
+
+	return temperature;
+
+}
+//static void OneWire_SetOutput(void)
+//{
+	/*GPIO_InitTypeDef GPIO_InitStruct = {0};
+	GPIO_InitStruct.Pin= DS18B20_PIN;
+	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+	HAL_GPIO_Init(DS18B20_PORT, &GPIO_InitStruct);*/
+	//DS18B20_PORT->MODER &= ~(0x3 << (1*2));
+	//DS18B20_PORT->MODER |=  (0x1 <<(1*2));
+
+
+//}
+
+
+//static void OneWire_SetInput(void)
+//{
+	/*GPIO_InitTypeDef GPIO_InitStruct = {0};
+	GPIO_InitStruct.Pin = DS18B20_PIN;
+	GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	HAL_GPIO_Init(DS18B20_PORT, &GPIO_InitStruct);*/
+	//DS18B20_PORT->MODER &= ~(0x3 << (1*2));
+
+//}
 /* USER CODE END 0 */
 
 /**
@@ -83,6 +272,8 @@ int main(void)
 
   /* USER CODE BEGIN Init */
 
+
+
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -98,6 +289,12 @@ int main(void)
   MX_USB_DEVICE_Init();
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
+  DWT_Delay_Init();
+
+  HAL_Delay(2000);
+  char clk_msg[80];
+  sprintf(clk_msg, "BMS Project Initialized. HCLK: %lu Hz\r\n", HAL_RCC_GetHCLKFreq());
+  CDC_Transmit_FS((uint8_t*)clk_msg, strlen(clk_msg));
 
   /* USER CODE END 2 */
 
@@ -105,25 +302,81 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
+	  /*uint32_t raw_idr = GPIOA->IDR;
+	  char debug_txt[60];
+
+	  // Print the exact binary state of the first few pins of Port A
+	   sprintf(debug_txt, "Port A IDR Register Raw Bits: 0x%08LX\r\n", raw_idr);
+	   CDC_Transmit_FS((uint8_t*)debug_txt, strlen(debug_txt));
+
+	   //mirror to led
+	   if ((raw_idr & GPIO_PIN_1) !=0)
+	   {
+		   HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET); // LED ON
+	   }
+	   else
+	   {
+		   HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);   // LED OFF
+	   }
+
+	   HAL_Delay(3000);*/
+
+	  /*if ((GPIOA->IDR & GPIO_PIN_1) !=0)
+	  {
+		  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
+
+	  }
+	  else
+	  {
+		  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
+	  }
+
+	  HAL_Delay(50);*/
+	  //Toggle LED every cycle to see execution status
 	  HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 
+	  //1. Process Analog Readings(ADC)
 	  HAL_ADC_Start(&hadc1);
-	  HAL_ADC_PollForConversion(&hadc1, 10);
-	  uint32_t raw_adc = HAL_ADC_GetValue(&hadc1);
+	  if (HAL_ADC_PollForConversion(&hadc1, 10)==HAL_OK)
+	  {
+		  uint32_t raw_adc = HAL_ADC_GetValue(&hadc1);
+		  float adc_voltage = (raw_adc / 4095.0f) * 3.3f;
+
+		  float temperature = -999.0f;
+		  uint8_t test_byte = 0x00;
+
+		  //2. Process Digital 1-wire temperature sensor
+		  uint8_t conv_started = DS18B20_StartConversion();
+
+		  char msg[150];
+		  if(conv_started)
+		  {
+			  HAL_Delay(1000); // DS18B20 needs time to compute temperature
+			  temperature = DS18B20_ReadTemperature(&test_byte);
+			  sprintf(msg, "ADC: %.3fV | Temp: %.2fC | RawByte0: 0x%02X\r\n", adc_voltage, temperature, test_byte);
+
+		  }
+		  else
+		  {
+			  sprintf(msg, "ADC: %.3fV | Sensor Status: DISCONNECTED / RESET FAILED\r\n", adc_voltage);
+		   }
+
+		  //3. Telemetry output over USB virtual COM port
+		  CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+	  }
 	  HAL_ADC_Stop(&hadc1);
+	  //uint8_t presence = OneWire_Reset();
+	  //char debug_msg[50];
+	  //sprintf(debug_msg, "Presence Pulse: %d\r\n", presence);
+	  //CDC_Transmit_FS((uint8_t*)debug_msg, strlen(debug_msg));
 
-	  float adc_voltage = (raw_adc / 4095.0f) * 3.3f;
-
-	  char adc_msg[80];
-	  sprintf(adc_msg, "ADC Raw: %lu | Voltage: %.3fV\r\n", raw_adc, adc_voltage);
-
-	  CDC_Transmit_FS((uint8_t*)adc_msg, strlen(adc_msg));
-
-	  HAL_Delay(500);
+	  //safe place delay prevents flooding tera term
+	  HAL_Delay(1000);
+    /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
   }
+
   /* USER CODE END 3 */
 }
 
@@ -277,6 +530,9 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
 
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(DS18B20_GPIO_Port, DS18B20_Pin, GPIO_PIN_SET);
+
   /*Configure GPIO pin : LED_Pin */
   GPIO_InitStruct.Pin = LED_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -284,11 +540,18 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LED_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : DS18B20_Pin */
+  GPIO_InitStruct.Pin = DS18B20_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  HAL_GPIO_Init(DS18B20_GPIO_Port, &GPIO_InitStruct);
+
   /* USER CODE BEGIN MX_GPIO_Init_2 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0;
-  GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+ /* GPIO_InitStruct.Pin = GPIO_PIN_1;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);*/
 
   /* USER CODE END MX_GPIO_Init_2 */
 }
